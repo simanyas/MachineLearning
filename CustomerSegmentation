@@ -1,0 +1,233 @@
+from matplotlib import pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import scipy
+from sklearn.cluster import KMeans
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import DBSCAN
+
+# Global variable retail_data_train, retail_data_test
+retail_data_train = pd.DataFrame()
+retail_data_train = pd.read_csv("Online_Retail_Train.csv")
+retail_data_train.tail()
+
+retail_data_test = pd.DataFrame()
+retail_data_test = pd.read_csv("Online_Retail_Test.csv")
+retail_data_test.tail()
+
+retail_data_train[retail_data_train.duplicated()]
+
+def handleDuplicates():
+  global retail_data_train
+  global retail_data_test
+  print("Number of duplicated rows =", len(retail_data_train.duplicated()))
+  retail_data_train.drop_duplicates(inplace=True)
+  print("Number of rows after dropping duplicates =", len(retail_data_train.duplicated()))
+
+def handleCancelled():
+  global retail_data_train
+  global retail_data_test
+  print("Number of rows with Cancelled orders = ", len(retail_data_train[(retail_data_train.Quantity < 0)]))
+  print("Some of the rows with Cancelled orders = ", retail_data_train[(retail_data_train.Quantity < 0)].head())
+  retail_data_train = retail_data_train[(retail_data_train.Quantity >= 0)]
+  print("Number of rows with Cancelled orders after Updating data = ", len(retail_data_train[retail_data_train.Quantity < 0]))
+
+def handleNullDrop():
+  global retail_data_train
+  global retail_data_test
+  print("Checking for null values = ", retail_data_train.isnull().sum(),retail_data_train.isnull().sum().sum())
+  print("Checking for N/A values = ", retail_data_train.isna().sum(),retail_data_train.isna().sum().sum())
+  retail_data_train = retail_data_train.dropna()
+  print("Checking again for null values after dropping = ", retail_data_train.isnull().sum(),retail_data_train.isnull().sum().sum())
+  print("Checking again for N/A values after dropping = ", retail_data_train.isna().sum(),retail_data_train.isna().sum().sum())
+
+# We must be cautious to split train+test data before filling NA values with mean since
+# it leaks data from train set to test set.
+# Here we need to group by the item and check the mean quantity or mean price.
+# Only for these 2 columns, mean makes sense.
+def handleNullMean():
+  global retail_data_train
+  global retail_data_test
+  retail_data_train = retail_data_train.fillna(retail_data_train.mean())
+
+# Eliminate StockCode = 'POST' 'PADS' 'M' 'DOT' 'C2' 'BANK CHARGES'
+def handleStockCodes():
+  global retail_data_train
+  global retail_data_test
+  print("Checking for invalid stock codes = ", len(retail_data_train[(retail_data_train.StockCode == 'POST') | (retail_data_train.StockCode == 'PADS') | (retail_data_train.StockCode == 'M') | (retail_data_train.StockCode == 'DOT') | (retail_data_train.StockCode == 'C2') | (retail_data_train.StockCode == 'BANK CHARGES')]))
+  retail_data_train = retail_data_train[(retail_data_train.StockCode != 'POST') & (retail_data_train.StockCode != 'PADS') & (retail_data_train.StockCode != 'M') & (retail_data_train.StockCode != 'DOT') & (retail_data_train.StockCode != 'C2') & (retail_data_train.StockCode != 'BANK CHARGES')]
+  print("Checking again for invalid stock codes after updation= ", len(retail_data_train[(retail_data_train.StockCode == 'POST') | (retail_data_train.StockCode == 'PADS') | (retail_data_train.StockCode == 'M') | (retail_data_train.StockCode == 'DOT') | (retail_data_train.StockCode == 'C2') | (retail_data_train.StockCode == 'BANK CHARGES')]))
+
+def handleOutliers():
+  global retail_data_train
+  global retail_data_test
+  retail_data_train['ZScore_UnitPrice'] = stats.zscore(retail_data_train.UnitPrice)
+  retail_data_train['ZScore_Quantity'] = stats.zscore(retail_data_train.Quantity)
+  print("Checking for Outliers = ", len(retail_data_train[(retail_data_train.ZScore_Quantity.abs() > 3) | (retail_data_train.ZScore_UnitPrice.abs() > 3)]))
+  retail_data_train = retail_data_train[(retail_data_train.ZScore_Quantity.abs() <= 3)  & (retail_data_train.ZScore_UnitPrice.abs() <= 3)]
+  print("Checking again for Outliers after removing them = ", len(retail_data_train[(retail_data_train.ZScore_Quantity.abs() > 3) | (retail_data_train.ZScore_UnitPrice.abs() > 3)]))
+
+def handleDateTime():
+  global retail_data_train
+  global retail_data_test
+  retail_data_train['DayOfWeek'] = pd.to_datetime(retail_data_train.InvoiceDate)
+
+
+# This API drops null/NA
+def handleDataProcessingDropNull():
+  global retail_data_train
+  global retail_data_test
+  handleDuplicates()
+  handleCancelled()
+  handleNullDrop()
+  handleStockCodes()
+  handleOutliers()
+  handleDateTime()
+
+# This API invokes handleNullMean API to replace null/NA with the mean value for the columns Quantity and Price
+def handleDataProcessingReplaceNullWithMean():
+  global retail_data_train
+  global retail_data_test
+  handleDuplicates()
+  handleCancelled()
+  handleNullMean()
+  handleStockCodes()
+  handleOutliers()
+  handleDateTime()
+
+# Invoke the API to Pre-process data
+handleDataProcessingDropNull()
+retail_data_train.head()
+
+# Free items in the data = There are 30 free items in the data
+len(retail_data_train[retail_data_train.UnitPrice == 0])
+
+# Find the number of transactions per country and visualize using an appropriate plot
+# Since the counts are very small for many countries, print the value also
+sns.set(rc={'figure.figsize':(20,8)})
+sns.countplot(x=retail_data_train.Country,data=retail_data_train)
+plt.xticks(rotation=290)
+
+# Number of unique customers = 4312
+# What is the ratio of customers who are repeat purchasers vs single-time purchasers? Visualize using an appropriate plot.
+retail_data_customer_info = pd.DataFrame()
+
+# Group by customer id
+retail_data_customer_info = retail_data_train.groupby('CustomerID').size().reset_index(name='count')
+retail_data_customer_info.columns = ['CustomerID','PurchaseCount']
+retail_data_customer_info
+print(len(retail_data_customer_info[(retail_data_customer_info.PurchaseCount == 1)])) #71 customers are single-time purchasers
+fig, ax = plt.subplots()
+sns.set(rc={'figure.figsize':(25,8)})
+sns.histplot(retail_data_customer_info.PurchaseCount,ax=ax)
+ax.set_xlim(1,7000)
+
+# Plot heatmap showing unit price per month and day of the week
+# Hint: Month name as index on Y-axis, Day of the week on X-axis
+
+# Currently there are 0 entries for Saturday (week = 5). If we had chosen NAN/null customerID entries, would the Saturday data change?
+from datetime import date
+import calendar
+retail_data_monthly = pd.DataFrame()
+retail_data_monthly['Month'] = retail_data_train.DayOfWeek.dt.month_name()
+retail_data_monthly['Day'] = retail_data_train.DayOfWeek.dt.weekday
+retail_data_monthly['UnitPrice'] = retail_data_train.UnitPrice
+retail_data_monthly
+
+len(retail_data_monthly[retail_data_monthly.Day == 5])
+
+retail_data_monthwise = retail_data_monthly.groupby(['Month','Day']).agg(MaxUnitPrice=pd.NamedAgg(column="UnitPrice", aggfunc="max"))
+
+plt.legend(title= 'WeekDay', title_fontsize = 15,  prop = {'size' : 13}, bbox_to_anchor= (1.02, 1));
+plt.title("Unit Price per Month/Weekday")
+plt.xlabel("Months")
+plt.ylabel("Unit Price")
+plt.yticks(np.arange(0, 20, step=1.0))
+retail_data_monthwise.pivot_table(index = 'Month', columns = 'Day' , values = 'MaxUnitPrice').plot(kind = 'bar', stacked = False,figsize=(20,10))
+
+retail_data_monthwise
+
+# Find the top 10 customers who bought the most no.of items. Also find the top 10 Items bought by most no.of customers.
+retail_data_customer_info.head()
+retail_data_customer_info.sort_values(by=['PurchaseCount'],inplace=True)
+retail_data_customer_info.tail(10)
+
+# Also find the top 10 Items bought by most no.of customers.
+# Group by item purchased
+retail_data_item_info = retail_data_train.groupby('StockCode').size().reset_index(name='count')
+retail_data_item_info.columns = ['StockCode','ItemCount']
+retail_data_item_info.sort_values(by=['ItemCount'],inplace=True)
+retail_data_item_info.tail(10)
+
+# Create a new column which represents amount spent by each customer per item
+def calculateAmount(df):
+  df_new = df.Quantity * df.UnitPrice
+  df_new.head()
+  return df_new
+
+retail_data_train['Amount'] = retail_data_train.apply(calculateAmount)
+retail_data_train.head()
+
+# Customer IDs are seen to be repeated.
+# Maintain unique customer IDs by grouping and summing up all possible observations per customer.
+# Create a new column which represents total amount spent by each customer
+
+def calculateTotalAmountPerCustomer(df):
+  return df.groupby(['CustomerID']).agg(TotalAmount=pd.NamedAgg(column=('Amount'), aggfunc="sum"))
+
+retail_data_spending_per_customer = retail_data_train.apply(calculateTotalAmountPerCustomer)
+retail_data_spending_per_customer
+
+# Test set provided as below
+test = pd.read_csv("Online_Retail_Test.csv")
+test.head(3)
+
+# Cascading a Supervised and Unsupervised model into a pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
+
+log_reg = LogisticRegression(multi_class="ovr", solver="lbfgs", max_iter=5000, random_state=42)
+log_reg.fit(X_train, y_train)
+log_reg_score = log_reg.score(X_test, y_test)
+log_reg_score
+
+pipeline = Pipeline([
+    ("kmeans", KMeans(n_clusters=50, random_state=42)),
+    ("log_reg", LogisticRegression(multi_class="ovr", solver="lbfgs", max_iter=5000, random_state=42)),
+])
+pipeline.fit(X_train, y_train)
+
+pipeline_score = pipeline.score(X_test, y_test)
+pipeline_score
+
+1 - (1 - pipeline_score) / (1 - log_reg_score)
+
+param_grid = dict(kmeans__n_clusters=range(2, 100))
+grid_clf = GridSearchCV(pipeline, param_grid, cv=3, verbose=2)
+grid_clf.fit(X_train, y_train)
+
+grid_clf.best_params_
+
+grid_clf.score(X_test, y_test)
+
+#  Let's see how we can do better
+k = 50
+kmeans = KMeans(n_clusters=k, random_state=42)
+X_digits_dist = kmeans.fit_transform(X_train)
+
+log_reg = LogisticRegression(multi_class="ovr", solver="lbfgs", max_iter=5000, random_state=42)
+log_reg.fit(X_representative_digits, y_representative_digits)
+log_reg.score(X_test, y_test)
+
+# what if we propagated the labels to all the other instances in the same cluster?
+y_train_propagated = np.empty(len(X_train), dtype=np.int32)
+for i in range(k):
+    y_train_propagated[kmeans.labels_==i] = y_representative_digits[i]
+    
+log_reg = LogisticRegression(multi_class="ovr", solver="lbfgs", max_iter=5000, random_state=42)
+log_reg.fit(X_train, y_train_propagated)
+
+log_reg.score(X_test, y_test)
