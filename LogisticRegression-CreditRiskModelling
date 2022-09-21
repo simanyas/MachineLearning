@@ -1,0 +1,262 @@
+!pip -qq install xverse
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn import metrics
+import seaborn as sns
+from matplotlib import pyplot as plt
+import math
+from xverse.transformer import MonotonicBinning,WOE
+from xverse.ensemble import VotingSelector
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+plt.close('all')
+
+data = pd.read_csv("GiveMeSomeCredit.csv")
+data.head()
+
+data.dtypes
+len(data)
+
+data.SeriousDlqin2yrs.value_counts
+
+data.tail()
+data.NumberOfDependents.value_counts
+data[["age"]] = data[["age"]].astype("float64")
+data.dtypes
+
+data[~data.applymap(np.isreal).all(1)]
+data.dtypes
+
+data = data.drop(columns="Unnamed: 0")
+data
+
+data.isnull().sum().sum()
+data.isna().sum().sum()
+data.isnull().sum()
+data.dropna(inplace = True)
+data.isnull().sum()
+len(data)
+data[["NumberOfDependents"]] = data[["NumberOfDependents"]].astype("int64")
+
+# Majority and Minority Class - Weighted Classification - Check the percentage of values
+plt.figure(figsize=(15,8))
+data_targets = data[["SeriousDlqin2yrs","NumberOfTime30-59DaysPastDueNotWorse","NumberOfTimes90DaysLate","NumberOfTime60-89DaysPastDueNotWorse"]]
+sns.histplot(data=data_targets, x=data_targets.SeriousDlqin2yrs,stat="percent")
+plt.show()
+plt.savefig('target_label_percent')
+
+plt.figure(figsize=(25,10))
+sns.histplot(data=data_targets, x=data_targets['NumberOfTime30-59DaysPastDueNotWorse'],stat="percent",discrete=True)
+
+plt.figure(figsize=(35,8))
+sns.histplot(data=data_targets, x=data_targets.NumberOfTimes90DaysLate,stat="percent",discrete=True)
+
+plt.figure(figsize=(35,8))
+sns.histplot(data=data_targets, x=data_targets['NumberOfTime60-89DaysPastDueNotWorse'],stat="percent",discrete=True)
+
+data.SeriousDlqin2yrs.value_counts() # Total of 8357 delinquents in given data
+
+# Now plot the age distribution of the 10026 instances of SeriousDlqin2yrs
+age_dist_serious_delinq = data.groupby([data.age]).agg(NumOfSeriousDelinq = ('SeriousDlqin2yrs','sum')).reset_index()
+age_dist_serious_delinq
+
+plt.figure(figsize=(30,10))
+sns.pointplot(data=age_dist_serious_delinq,x=age_dist_serious_delinq.age,y=age_dist_serious_delinq.NumOfSeriousDelinq)
+
+corr_data = data.corr()
+plt.figure(figsize=(10,10), dpi=85)
+sns.heatmap(corr_data)
+
+from sklearn.preprocessing import RobustScaler
+rScaler = RobustScaler()
+from sklearn.preprocessing import Normalizer
+nScaler = Normalizer(norm = 'l2')
+from sklearn.preprocessing import StandardScaler
+sScaler = StandardScaler()
+from sklearn.preprocessing import MinMaxScaler
+mScaler = MinMaxScaler()
+
+# Column wise scaling
+data["RevolvingUtilizationOfUnsecuredLines"] = sScaler.fit_transform(data["RevolvingUtilizationOfUnsecuredLines"].values.reshape(-1,1))
+data["DebtRatio"] = sScaler.fit_transform(data["DebtRatio"].values.reshape(-1,1))
+data["MonthlyIncome"] = sScaler.fit_transform(data["MonthlyIncome"].values.reshape(-1,1)) 
+data["age"] = sScaler.fit_transform(data["age"].values.reshape(-1,1))
+
+data.head()
+
+# Mark y (SeriousDlqin2yrs) as categorical data
+#data[["SeriousDlqin2yrs"]] = data[["SeriousDlqin2yrs"]].astype("category")
+y = data.SeriousDlqin2yrs
+
+# Test with different scalers
+X = data.drop(columns=["SeriousDlqin2yrs"])
+scaled_X = X
+
+clf = MonotonicBinning()
+clf.fit(scaled_X, y)
+output_bins = clf.bins
+print(clf.bins)
+clf = MonotonicBinning(custom_binning=output_bins)
+out_X = clf.transform(scaled_X)
+out_X.head()
+
+clf = WOE()
+clf.fit(scaled_X,y)
+X2 = clf.transform(scaled_X)
+print(clf.woe_df, clf.iv_df) #Weight of Evidence transformation dataset
+
+#print(clf.iv_df) #Information value dataset
+
+#from xverse.graph import BarCharts
+#clf = BarCharts(bar_type='v')
+#clf.plot(woe_df)
+
+print(clf.get_params)
+
+data_removed_low_high_iv = data.drop(columns=["RevolvingUtilizationOfUnsecuredLines","NumberRealEstateLoansOrLines"])
+len(data_removed_low_high_iv)
+
+# Separate X,y for non WOE tests
+X_non_woe = data.drop(columns=["SeriousDlqin2yrs"])
+y_non_woe = data[["SeriousDlqin2yrs"]]
+
+# First drop the features which scored low on WOE test
+X = data_removed_low_high_iv.drop(columns=["SeriousDlqin2yrs"])
+y = data_removed_low_high_iv[["SeriousDlqin2yrs"]]
+
+# X, y for sklearn Logistic Regression implementation
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.25, random_state = 0)
+
+# Separate X, y for from scratch gradient descent implementation
+# Using only 1 input features instead of 8 since session is crashing. RAM is running out due to large malloc, possibly XxTheta for 8 features
+X_train_grad = X_train[['NumberOfTime30-59DaysPastDueNotWorse']].head()
+X_test_grad = X_test[['NumberOfTime30-59DaysPastDueNotWorse']].head()
+y_train_grad = y_train.head()
+y_test_grad = y_test.head()
+
+X_train_grad.dtypes
+X_train_grad
+y_test_grad
+
+X_train_non_woe, X_test_non_woe, y_train_non_woe, y_test_non_woe = train_test_split(X_non_woe, y_non_woe, test_size = 0.25, random_state = 0)
+
+classifier_non_woe = LogisticRegression(random_state = 0,max_iter=1000,class_weight='balanced')
+classifier_non_woe.fit(X_train_non_woe, y_train_non_woe.values.ravel())
+y_pred_non_woe = classifier_non_woe.predict(X_test_non_woe)
+y_pred_non_woe = pd.DataFrame(y_pred_non_woe)
+X_non_woe
+
+classifier_non_woe.coef_
+classifier_non_woe.intercept_
+
+from sklearn.metrics import classification_report
+print(classification_report(y_test_non_woe, y_pred_non_woe))
+
+from sklearn.metrics import confusion_matrix, accuracy_score
+# With weightage - 0.8099308234668086 is the accuracy score (with StandardScaler) and 0.8402585308529744 (without StandardScaler)
+classifier_wt = LogisticRegression(random_state = 0,class_weight='balanced',max_iter=1000)
+classifier_wt.fit(X_train, y_train.values.ravel())
+y_pred_with_wt = classifier_wt.predict(X_test)
+accuracy_score(y_test, y_pred_with_wt)
+classifier_wt.predict_proba(X_test)
+
+# Without weightage - 0.930723692962618 is the accuracy score (with StandardScaler) and 0.9310562724491154 (without StandardScaler)
+classifier_no_wt = LogisticRegression(random_state = 0,max_iter=1000)
+classifier_no_wt.fit(X_train, y_train.values.ravel())
+y_pred_no_wt = classifier_no_wt.predict(X_test)
+accuracy_score(y_test, y_pred_no_wt)
+
+# SGD Classifier With Class Weightage - 0.9066539544577725
+from sklearn.linear_model import SGDClassifier
+sgd_classifier_wt = SGDClassifier(loss='log',random_state = 0,class_weight='balanced')
+sgd_classifier_wt.fit(X_train, y_train.values.ravel())
+y_pred_sgd_wt = sgd_classifier_wt.predict(X_test)
+y_pred_sgd_wt_probability = sgd_classifier_wt.predict_proba(X_test)
+accuracy_score(y_test, y_pred_sgd_wt)
+y_pred_sgd_wt_probability
+
+# SGD Classifier Without Class Weightage - 0.9305226048202923
+sgd_classifier_no_wt = SGDClassifier(loss='log',random_state = 0)
+sgd_classifier_no_wt.fit(X_train, y_train.values.ravel())
+y_pred_sgd_no_wt = sgd_classifier_no_wt.predict(X_test)
+y_pred_sgd_no_wt_probability = sgd_classifier_no_wt.predict_proba(X_test)
+accuracy_score(y_test, y_pred_sgd_no_wt)
+y_pred_sgd_no_wt_probability
+
+# Features 7
+features = ["NumberOfTime60-89DaysPastDueNotWorse", "NumberOfTime30-59DaysPastDueNotWorse","NumberOfTimes90DaysLate","NumberOfDependents","NumberRealEstateLoansOrLines","age","NumberOfOpenCreditLinesAndLoans"]
+# Data from Regression coefficients 
+B = [-9.25952222e-01, 5.33580213e-01,4.26584502e-01,7.52050234e-02,3.92810603e-02,-4.02795970e-02,-8.76913774e-03]
+# Data from WOE
+WOE_list = [0.244553,0.458650,0.449550,0.023031,0.001810, 0.168243,0.023775] # Replace with WOE list instead of IV
+IV_list = [0.244553,0.458650,0.449550,0.023031,0.001810, 0.168243,0.023775]
+n = 7
+alpha = 0.04590361
+Score = 0
+
+for i in range (0,n):
+  Score += (-((B[i]*WOE_list[i])+(alpha/n))*factor + offset/n )
+  print(i)
+  print(Score)
+
+print("Credit Score = ", Score)
+
+from sklearn.metrics import precision_score, recall_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import accuracy_score
+
+print("precision_score ",precision_score(y_test, y_pred_with_wt))
+print("recall_score ",recall_score(y_test, y_pred_with_wt))
+print("f1_score ",f1_score(y_test, y_pred_with_wt))
+print("roc_auc_score ",roc_auc_score(y_test, y_pred_with_wt))
+print("accuracy_score ",accuracy_score(y_test, y_pred_with_wt))
+
+# Use sklearn to plot precision-recall curves
+from sklearn.metrics import confusion_matrix, accuracy_score
+from sklearn.metrics import plot_precision_recall_curve
+
+plot_precision_recall_curve(classifier_wt, X_test, y_test, name = 'Logistic Regression')
+
+#Recall: summarizes how well the positive class was predicted and is the same calculation as sensitivity.
+print("recall_score ",recall_score(y_test, y_pred_with_wt))
+
+from sklearn.metrics import classification_report
+print(classification_report(y_test, y_pred_with_wt))
+
+# Creating a confusion matrix
+from sklearn.metrics import confusion_matrix, accuracy_score
+cm = confusion_matrix(y_test, y_pred_with_wt)
+print(cm)
+accuracy_score(y_test, y_pred_with_wt)
+
+# roc_curve() computes the ROC for the classifier and returns the FPR, TPR, and threshold values
+from sklearn.metrics import roc_curve
+
+pred_prob1 = classifier_wt.predict_proba(X_test)
+
+# roc curve for models
+fpr1, tpr1, thresh1 = roc_curve(y_test, pred_prob1[:,1], pos_label=1)
+
+# roc curve for tpr = fpr 
+random_probs = [0 for i in range(len(y_test))]
+p_fpr, p_tpr, _ = roc_curve(y_test, random_probs, pos_label=1)
+
+plt.style.use('seaborn')
+
+# plot roc curves
+plt.plot(fpr1, tpr1, linestyle='--',color='orange', label='Logistic Regression')
+
+plt.plot(p_fpr, p_tpr, linestyle='--', color='blue')
+# title
+plt.title('ROC curve')
+# x label
+plt.xlabel('False Positive Rate')
+# y label
+plt.ylabel('True Positive rate')
+
+plt.legend(loc='best')
+plt.show()
